@@ -1,0 +1,12 @@
+{
+  "name": "reachly-proxy",
+  "version": "1.0.0",
+  "description": "Twitter API Proxy for Reachly",
+  "main": "index.js",
+  "scripts": {
+    "build": "echo 'No build required'"
+  },
+  "dependencies": {},
+  "author": "Reachly Team",
+  "license": "MIT"
+}
