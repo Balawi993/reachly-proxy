@@ -1,3 +1,50 @@
+// دالة استخراج بيانات المستخدم من HTML
+function extractUserDataFromHTML(html, username, isNitter) {
+  try {
+    if (isNitter) {
+      // استخراج من Nitter
+      const nameMatch = html.match(/<title>([^@]+)@/);
+      const avatarMatch = html.match(/class="avatar"[^>]*src="([^"]+)"/);
+      
+      if (nameMatch) {
+        return {
+          screen_name: username,
+          name: nameMatch[1].trim(),
+          profile_image_url_https: avatarMatch ? avatarMatch[1] : '',
+          verified: html.includes('verified-icon')
+        };
+      }
+    } else {
+      // استخراج من Twitter مباشرة
+      // البحث عن JSON data في الصفحة
+      const scriptMatch = html.match(/window\.__INITIAL_STATE__\s*=\s*({.+?});/);
+      if (scriptMatch) {
+        const data = JSON.parse(scriptMatch[1]);
+        // استخراج بيانات المستخدم من الـ state
+        // هذا يحتاج تحليل أعمق للـ structure
+      }
+      
+      // طريقة بديلة: البحث عن meta tags
+      const titleMatch = html.match(/<title>([^(]+)\(/);
+      const avatarMatch = html.match(/property="og:image"[^>]*content="([^"]+)"/);
+      
+      if (titleMatch) {
+        return {
+          screen_name: username,
+          name: titleMatch[1].trim(),
+          profile_image_url_https: avatarMatch ? avatarMatch[1] : '',
+          verified: html.includes('verified')
+        };
+      }
+    }
+    
+    return null;
+  } catch (error) {
+    console.log('Error extracting user data:', error.message);
+    return null;
+  }
+}
+
 // Netlify Function للـ Twitter Proxy
 exports.handler = async (event, context) => {
   // السماح بـ CORS
@@ -33,11 +80,11 @@ exports.handler = async (event, context) => {
       { ip: '45.38.107.97', port: '6014', user: 'xvsaxwrg', pass: '564wjdkwkrv8' }
     ];
     
-    // جرب endpoints مختلفة
+    // جرب web scraping بدلاً من API
     const endpoints = [
-      `https://api.twitter.com/1.1/users/show.json?screen_name=${username}`,
-      `https://mobile.twitter.com/i/api/1.1/users/show.json?screen_name=${username}`,
-      `https://twitter.com/i/api/1.1/users/show.json?screen_name=${username}`
+      `https://nitter.net/${username}`, // Nitter proxy
+      `https://x.com/${username}`, // Direct scraping
+      `https://mobile.twitter.com/${username}` // Mobile version
     ];
     
     let lastError = null;
@@ -52,38 +99,53 @@ exports.handler = async (event, context) => {
         try {
           // في Netlify Functions، لا يمكن استخدام proxy agents مباشرة
           // لذلك سنضيف headers إضافية لمحاكاة الـ proxy
+          // تحديد headers حسب نوع الـ endpoint
+          const isNitter = endpoint.includes('nitter.net');
+          const isMobile = endpoint.includes('mobile.twitter.com');
+          
+          const requestHeaders = {
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36',
+            'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'accept-language': 'en-US,en;q=0.9',
+            'accept-encoding': 'gzip, deflate, br',
+            'dnt': '1',
+            'upgrade-insecure-requests': '1',
+            'sec-fetch-dest': 'document',
+            'sec-fetch-mode': 'navigate',
+            'sec-fetch-site': 'none',
+            // إضافة headers لمحاكاة proxy
+            'x-forwarded-for': proxy.ip,
+            'x-real-ip': proxy.ip,
+            'cf-connecting-ip': proxy.ip,
+          };
+
+          // إضافة cookies فقط لـ Twitter domains
+          if (!isNitter) {
+            requestHeaders['cookie'] = `auth_token=${cookies.auth_token}; ct0=${cookies.ct0}`;
+            requestHeaders['referer'] = isMobile ? 'https://mobile.twitter.com/' : 'https://x.com/';
+          }
+
           const response = await fetch(endpoint, {
-            headers: {
-              'authorization': `Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA`,
-              'cookie': `auth_token=${cookies.auth_token}; ct0=${cookies.ct0}`,
-              'x-csrf-token': cookies.ct0,
-              'x-twitter-auth-type': 'OAuth2Session',
-              'x-twitter-active-user': 'yes',
-              'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36',
-              'accept': '*/*',
-              'accept-language': 'en-US,en;q=0.9',
-              'referer': endpoint.includes('mobile') ? 'https://mobile.twitter.com/' : 'https://x.com/',
-              'origin': endpoint.includes('mobile') ? 'https://mobile.twitter.com' : 'https://x.com',
-              // إضافة headers لمحاكاة proxy
-              'x-forwarded-for': proxy.ip,
-              'x-real-ip': proxy.ip,
-              'cf-connecting-ip': proxy.ip,
-            }
+            headers: requestHeaders
           });
 
           console.log(`${proxy.ip}:${proxy.port} -> ${endpoint} status:`, response.status);
           
-          // إذا نجح الطلب، أرجع النتيجة
+          // إذا نجح الطلب، استخرج البيانات
           if (response.ok) {
-            const contentType = response.headers.get('content-type');
-            if (contentType && contentType.includes('application/json')) {
-              const data = await response.json();
+            const html = await response.text();
+            
+            // استخراج بيانات المستخدم من HTML
+            const userData = extractUserDataFromHTML(html, username, isNitter);
+            
+            if (userData) {
               return {
                 statusCode: 200,
                 headers,
                 body: JSON.stringify({
-                  ...data,
-                  _proxy_used: `${proxy.ip}:${proxy.port}`
+                  ...userData,
+                  _proxy_used: `${proxy.ip}:${proxy.port}`,
+                  _method: isNitter ? 'nitter_scraping' : 'twitter_scraping'
                 })
               };
             }
