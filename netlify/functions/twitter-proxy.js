@@ -80,11 +80,13 @@ exports.handler = async (event, context) => {
       { ip: '45.38.107.97', port: '6014', user: 'xvsaxwrg', pass: '564wjdkwkrv8' }
     ];
     
-    // جرب web scraping بدلاً من API
+    // جرب endpoints مختلفة (بدون كوكيز أولاً)
     const endpoints = [
-      `https://nitter.net/${username}`, // Nitter proxy
-      `https://x.com/${username}`, // Direct scraping
-      `https://mobile.twitter.com/${username}` // Mobile version
+      `https://nitter.poast.org/${username}`, // Nitter instance مختلف
+      `https://nitter.net/${username}`, // Nitter الأصلي
+      `https://syndication.twitter.com/srv/timeline-profile/screen-name/${username}`, // Twitter syndication
+      `https://mobile.twitter.com/${username}`, // Mobile version
+      `https://x.com/${username}` // Direct scraping
     ];
     
     let lastError = null;
@@ -100,7 +102,8 @@ exports.handler = async (event, context) => {
           // في Netlify Functions، لا يمكن استخدام proxy agents مباشرة
           // لذلك سنضيف headers إضافية لمحاكاة الـ proxy
           // تحديد headers حسب نوع الـ endpoint
-          const isNitter = endpoint.includes('nitter.net');
+          const isNitter = endpoint.includes('nitter');
+          const isSyndication = endpoint.includes('syndication');
           const isMobile = endpoint.includes('mobile.twitter.com');
           
           const requestHeaders = {
@@ -119,10 +122,15 @@ exports.handler = async (event, context) => {
             'cf-connecting-ip': proxy.ip,
           };
 
-          // إضافة cookies فقط لـ Twitter domains
-          if (!isNitter) {
+          // إضافة cookies فقط لـ Twitter domains (وليس Nitter أو Syndication)
+          if (!isNitter && !isSyndication) {
             requestHeaders['cookie'] = `auth_token=${cookies.auth_token}; ct0=${cookies.ct0}`;
             requestHeaders['referer'] = isMobile ? 'https://mobile.twitter.com/' : 'https://x.com/';
+          }
+          
+          // headers خاصة لـ syndication
+          if (isSyndication) {
+            requestHeaders['accept'] = 'application/json, text/plain, */*';
           }
 
           const response = await fetch(endpoint, {
